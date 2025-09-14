@@ -125,7 +125,7 @@ function randomIP() {
 
     try {
 
-        await axios.post("http://localhost:4000/ingest", log);
+        await axios.post("http://localhost:4000/api/v1/ingest", log);
 
         
     } catch (error :any) {
@@ -146,6 +146,8 @@ function startLogGenerator(){
 
 
         console.log("Log generated Locally", log)
+
+        sendLogTOBackend(log)
 
      }, 1000);
 
