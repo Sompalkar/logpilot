@@ -26,15 +26,15 @@ model Log {
 
 
     id                    String          @id @default(uuid())
-    orgId                 String          @db.Text
+    orgId                 String?         @db.Text
     service               String          @db.Text
     level                 String          @db.Text
     timestamp             DateTime        
     message               String?         @db.Text
-    latencyMs             Int 
-    responseCode          Int 
+    latencyMs             Int?
+    responseCode          Int? 
     metadata              Json?
-    rasS3Path             String          @db.Text
+    rawS3Path             String?         @db.Text
     createdAt             DateTime        @default(now())
 
     @@index([service, timestamp])
@@ -49,10 +49,10 @@ model LogVector  {
 
       id            String              @id @default(uuid())
       logId         String              @db.Text
-      orgId         String              @db.Text
-      service       String              @db.Text
-      model         String              @db.Text
-      vectorId      String              @db.Text
+      orgId         String?             @db.Text
+      service       String?             @db.Text
+      model         String?             @db.Text
+      vectorId      String?             @db.Text
       dims          Int?  
       createdAt     DateTime            @default(now())
 

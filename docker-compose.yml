@@ -1,0 +1,153 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: logpilot-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: logpilot
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./logBackend/prisma/migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - logpilot
+
+  # Redis for caching and streaming
+  redis:
+    image: redis:7-alpine
+    container_name: logpilot-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - logpilot
+
+  # LogPilot Backend API
+  backend:
+    build:
+      context: ./logBackend
+      dockerfile: Dockerfile
+    container_name: logpilot-backend
+    environment:
+      # Database
+      DATABASE_URL: "postgresql://postgres:password@postgres:5432/logpilot?schema=public"
+      
+      # Server
+      PORT: 8000
+      NODE_ENV: production
+      
+      # JWT
+      JWT_SECRET: "super-secret-jwt-key-change-in-production"
+      JWT_EXPIRY: "24h"
+      
+      # Redis
+      REDIS_URL: "redis://redis:6379"
+      
+      # Anomaly Detection
+      ANOMALY_WINDOW_SECONDS: 120
+      ANOMALY_BASELINE_SECONDS: 3600
+      ANOMALY_FACTOR: 3.0
+      ANOMALY_MIN_ERRORS: 3
+      
+      # API Settings
+      API_RATE_LIMIT: 1000
+      BATCH_SIZE: 500
+      BATCH_TIMEOUT_MS: 1000
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - logpilot
+
+  # Log Generator Service
+  log-generator:
+    build:
+      context: ./LogService
+      dockerfile: Dockerfile
+    container_name: logpilot-generator
+    environment:
+      AUTH_TOKEN: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjEyMyIsInVzZXJuYW1lIjoidGVzdCIsInJvbGUiOiJhZG1pbiIsImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoyMDAwMDAwMDAwfQ.dummy-token-for-dev"
+      BACKEND_URL: "http://backend:8000"
+      LOG_INTERVAL: 1000
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - logpilot
+
+  # pgAdmin for database management (optional)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: logpilot-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@logpilot.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - logpilot
+    profiles:
+      - tools
+
+  # Redis Commander for Redis management (optional)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: logpilot-redis-commander
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - logpilot
+    profiles:
+      - tools
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  logpilot:
+    driver: bridge
+
+# Health check script
+# Run: docker-compose ps to see service health status
+# Run: docker-compose logs [service_name] to see logs
+# Run: docker-compose --profile tools up to include management tools

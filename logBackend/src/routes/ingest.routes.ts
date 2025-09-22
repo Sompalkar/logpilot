@@ -1,14 +1,16 @@
 import { Router } from "express";
-import { ingestLog } from "../controller/ingest.controller.ts";
+import { ingestLog, getLogs, getLogStats } from "../controller/ingest.controller.js";
+import { authenticateToken, optionalAuth } from "../middleware/auth.js";
 
-const router = Router()
+const router = Router();
 
+// Log ingestion - requires authentication
+router.post('/ingest', authenticateToken, ingestLog);
 
+// Get logs with filtering - requires authentication  
+router.get('/logs', authenticateToken, getLogs);
 
+// Get log statistics - requires authentication
+router.get('/logs/stats', authenticateToken, getLogStats);
 
-router.get('/ingest', ingestLog);
-
-
-
-
-export default router
+export default router;

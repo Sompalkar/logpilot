@@ -1,7 +1,14 @@
 
 import axios from 'axios';
 
- 
+// Configuration
+const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000';
+const LOG_INTERVAL = parseInt(process.env.LOG_INTERVAL || '1000');
+const USERNAME = process.env.USERNAME || 'loggen';
+const PASSWORD = process.env.PASSWORD || 'password123';
+
+// Authentication token (will be fetched on startup)
+let AUTH_TOKEN = process.env.AUTH_TOKEN || null;
 
 const LEVELS= ['INFO', 'INFO', 'INFO', 'WARN', 'ERROR'];
 
@@ -74,9 +81,11 @@ const SERVICE_MESSAGES: Record<string, string[]> = {
 
 
 
-function choice <T>(arr: T[]):T{
-
-     return arr[Math.floor(Math.random() * arr.length)];
+function choice <T>(arr: T[]): T {
+    if (arr.length === 0) {
+        throw new Error('Cannot choose from empty array');
+    }
+    return arr[Math.floor(Math.random() * arr.length)]!;
 }
 
 
@@ -90,26 +99,29 @@ function randomIP() {
   function generateLog (){
 
     const service = choice(SERVICES);
-    const message = choice(SERVICE_MESSAGES[service]);
+    const messages = SERVICE_MESSAGES[service];
+    if (!messages) {
+        throw new Error(`No messages found for service: ${service}`);
+    }
+    const message = choice(messages);
     const level = choice(LEVELS);
 
 
     return{
-
+         orgId: `org-${Math.ceil(Math.random() * 5)}`, // Random org ID
          timestamp: new Date().toISOString(),
          level,
          service,
          message,
+         latencyMs: Math.floor(Math.random() * 500),
+         responseCode: [200,200,200,404,500][Math.floor(Math.random() *5)],
          metadata:{
-
-            requestID:Math.random().toString(36).substring(7),
+            requestId: Math.random().toString(36).substring(7),
             userId: `user-${Math.ceil(Math.random() *100)}`,
             ip: randomIP(),
-            latencyMS: Math.floor(Math.random() * 500),
-            responseCode: [200,200,200,404,500][Math.floor(Math.random() *5)],
-            host:  `host-${Math.ceil(Math.random() * 3)}`,
-
-        
+            host: `host-${Math.ceil(Math.random() * 3)}`,
+            userAgent: 'LogGenerator/1.0',
+            endpoint: `/api/${service.split('-')[0]}/${Math.random().toString(36).substring(7)}`
         }
     }
 
@@ -120,42 +132,130 @@ function randomIP() {
   }
 
 
-  async function sendLogTOBackend(log:any) {
-
-
-    try {
-
-        await axios.post("http://localhost:4000/api/v1/ingest", log);
-
-        
-    } catch (error :any) {
-        
-        console.log("Error sending log: " ,error.message);
-
-    }
+// Authentication functions
+async function authenticateUser(): Promise<string | null> {
+  try {
+    console.log('🔐 Attempting to authenticate user...');
     
+    // First try to register the user (in case it doesn't exist)
+    try {
+      await axios.post(`${BACKEND_URL}/api/v1/auth/register`, {
+        username: USERNAME,
+        password: PASSWORD,
+        role: 'admin'
+      });
+      console.log('✅ User registered successfully');
+    } catch (regError: any) {
+      if (regError.response?.status === 409) {
+        console.log('ℹ️  User already exists, proceeding to login...');
+      } else {
+        console.log('⚠️  Registration failed:', regError.response?.data?.error || regError.message);
+      }
+    }
+
+    // Login to get token
+    const loginResponse = await axios.post(`${BACKEND_URL}/api/v1/auth/login`, {
+      username: USERNAME,
+      password: PASSWORD
+    });
+
+    const token = loginResponse.data.token;
+    console.log('✅ Authentication successful');
+    return token;
+    
+  } catch (error: any) {
+    console.error('❌ Authentication failed:', error.response?.data?.error || error.message);
+    return null;
+  }
+}
+
+async function sendLogToBackend(log: any) {
+  try {
+    if (!AUTH_TOKEN) {
+      console.log('⚠️  No auth token available, skipping log...');
+      return;
+    }
+
+    await axios.post(`${BACKEND_URL}/api/v1/ingest`, log, {
+      headers: {
+        'Authorization': `Bearer ${AUTH_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    // Log success occasionally to avoid spam
+    if (Math.random() < 0.01) { // 1% of the time
+      console.log('📤 Log sent successfully');
+    }
+        
+  } catch (error: any) {
+    if (error.response?.status === 401 || error.response?.status === 403) {
+      console.log('🔐 Token expired or invalid, re-authenticating...');
+      AUTH_TOKEN = await authenticateUser();
+    } else {
+      console.log("❌ Error sending log:", error.response?.data?.error || error.message);
+    }
+  }
 }
 
 
 
 function startLogGenerator(){
+  console.log(`🚀 Starting log generator...`);
+  console.log(`📊 Generating logs every ${LOG_INTERVAL}ms`);
+  console.log(`🎯 Target backend: ${BACKEND_URL}`);
 
-     setInterval(()=>{
+  setInterval(() => {
+    const log = generateLog();
+    
+    // Log generated data occasionally to avoid spam
+    if (Math.random() < 0.001) { // 0.1% of the time
+      console.log("📝 Sample log generated:", JSON.stringify(log, null, 2));
+    }
 
-        const log = generateLog();
-
-
-        console.log("Log generated Locally", log)
-
-        sendLogTOBackend(log)
-
-     }, 1000);
-
-     
+    sendLogToBackend(log);
+  }, LOG_INTERVAL);
 }
 
+// Main startup function
+async function main() {
+  console.log('🔥 LogPilot Log Generator Starting...');
+  
+  // Wait a bit for backend to be ready if using Docker
+  if (process.env.NODE_ENV === 'production') {
+    console.log('⏳ Waiting for backend to be ready...');
+    await new Promise(resolve => setTimeout(resolve, 10000));
+  }
 
+  // Authenticate
+  if (!AUTH_TOKEN) {
+    AUTH_TOKEN = await authenticateUser();
+    if (!AUTH_TOKEN) {
+      console.error('❌ Failed to authenticate. Exiting...');
+      process.exit(1);
+    }
+  }
 
-startLogGenerator();
+  // Start generating logs
+  startLogGenerator();
+  console.log('✅ Log generator is running!');
+}
+
+// Handle graceful shutdown
+process.on('SIGINT', () => {
+  console.log('\n🛑 Shutting down log generator...');
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  console.log('\n🛑 Shutting down log generator...');
+  process.exit(0);
+});
+
+// Start the application
+main().catch((error) => {
+  console.error('💥 Fatal error:', error);
+  process.exit(1);
+});
 
 

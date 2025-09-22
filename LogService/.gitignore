@@ -10,9 +10,12 @@
 ./test-results.xml.gz.base64
 ./test-results.xml.gz.base64.gz
 ./test-results.xml.gz.base64.gz.base64  
-# Keep environment variables out of version control
 .env
-
-/src/generated/prisma
-
-/src/generated/prisma
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.development
+.env.test
+.env.production
+.env.local
